@@ -1,1 +1,1 @@
-"# flashcards-scraper" 
+Scrape Glassdoor Reviews and Interviews.
