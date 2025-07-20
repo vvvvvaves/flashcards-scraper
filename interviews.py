@@ -10,8 +10,9 @@ import json
 import yaml
 from argparse import ArgumentParser
 import selenium
+from selenium.common.exceptions import NoSuchElementException
 
-DEFAULT_URL = ('https://www.glassdoor.com/Interview/ActiveFence-Interview-Questions-E4077549.htm')
+DEFAULT_URL = ('https://www.glassdoor.com/fake-url')
 
 parser = ArgumentParser()
 parser.add_argument('-u', '--url',
@@ -68,6 +69,13 @@ def get_interviews_from_page(driver, wait):
     print(f"Found {len(interview_divs)} interview review divs")
     interview_data = []
     for div in interview_divs:
+        optional_divs = div.find_elements(By.XPATH, './/div[contains(@class, "text-with-icon")]')
+        location = None
+        for optional_div in optional_divs:
+            if optional_div.find_elements(By.CSS_SELECTOR, 'svg[class="icon_Icon__ptI3R"]'):
+                if not location:
+                    # print('location', div.text.strip())
+                    location = optional_div.text.strip()
         interview_position = div.find_elements(By.TAG_NAME, "h3")[0].text
         span_elements = div.find_elements(By.TAG_NAME, "span")
         published_date = span_elements[0].text
@@ -81,10 +89,16 @@ def get_interviews_from_page(driver, wait):
         interview_review = p_elements[3].text
 
         interview_questions = [p.text for p in p_elements[6::2]]
+        
+        try:
+            helpful_count = div.find_element(By.CSS_SELECTOR, 'div[data-test="review-helpful-count"]').text
+        except NoSuchElementException:
+            helpful_count = 0
        
 
         interview_data.append({
             "interview_position": interview_position,
+            "location": location,
             "published_date": published_date,
             "candidate": candidate,
             "is_offer_received": is_offer_received,
@@ -92,7 +106,8 @@ def get_interviews_from_page(driver, wait):
             "interview_difficulty": interview_difficulty,
             "application_process": application_process,
             "interview_review": interview_review,
-            "interview_questions": interview_questions
+            "interview_questions": interview_questions,
+            "helpful_count": helpful_count
         })
         # print(interview_data[-1])
     return interview_data
@@ -117,10 +132,7 @@ def save_interviews(interviews):
     df = pd.DataFrame(interviews)
     df.to_csv('interviews.csv', index=False)
 
-def get_all_reviews():
-    driver, wait = get_driver(interviews_url)
-    time.sleep(30)
-    driver.quit()
 
 if __name__ == "__main__":
-    get_all_reviews()
+    interviews = get_all_interviews()
+    save_interviews(interviews)
