@@ -10,7 +10,7 @@ import json
 import yaml
 from argparse import ArgumentParser
 import selenium
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, NoSuchDriverException
 
 DEFAULT_URL = ('https://www.glassdoor.com/fake-url')
 
@@ -26,8 +26,9 @@ args = parser.parse_args()
 
 interviews_url = args.url
 
+service = None
 
-def get_driver(url):
+def get_driver(url=None):
     # Set up Selenium options
     options = Options()
     options.add_argument("--start-maximized")
@@ -41,10 +42,17 @@ def get_driver(url):
             "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
     
-    driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 30)
+    global service
+    try:
+        driver = webdriver.Chrome(options=options, service=service)
+    except NoSuchDriverException:
+        from install_chromedriver import get_service
+        service = get_service()
+        driver = webdriver.Chrome(options=options, service=service)
+    wait = WebDriverWait(driver, 15)
 
-    driver.get(url)
+    if url:
+        driver.get(url)
 
     return driver, wait
 
@@ -87,8 +95,10 @@ def get_interviews_from_page(driver, wait):
         p_elements = div.find_elements(By.TAG_NAME, "p")
         application_process = p_elements[1].text
         interview_review = p_elements[3].text
-
-        interview_questions = [p.text for p in p_elements[6::2]]
+        question_elements = div.find_elements(By.CSS_SELECTOR, 'div.interview-details_interviewText__YH2ZO > p')
+        interview_questions = [question_element.get_attribute('textContent') for question_element in question_elements]
+        print(published_date)
+        print(interview_questions)
         
         try:
             helpful_count = div.find_element(By.CSS_SELECTOR, 'div[data-test="review-helpful-count"]').text
@@ -121,11 +131,12 @@ def get_all_interviews():
         print(f"Getting interviews from {full_url}")
         driver, wait = get_driver(full_url)
         interviews_data = get_interviews_from_page(driver, wait)
-        driver.quit()
         if len(interviews_data) == 0:
             break
         all_interviews.extend(interviews_data)
         page += 1
+        driver.quit()
+
     return all_interviews
 
 def save_interviews(interviews):
