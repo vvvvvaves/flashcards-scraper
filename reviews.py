@@ -8,13 +8,20 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import pandas as pd
 from bs4 import BeautifulSoup
+import datetime
+import logging
+from logging.handlers import RotatingFileHandler
 
 DEFAULT_URL = ('https://www.glassdoor.com/fake-url')
+DEFAULT_FILEPATH = 'reviews.csv'
 
 parser = ArgumentParser()
 parser.add_argument('-u', '--url',
                     help='URL of the company\'s Glassdoor reviews page.',
                     default=DEFAULT_URL)
+parser.add_argument('-f', '--filepath',
+                    help='Path to save the reviews.',
+                    default=DEFAULT_FILEPATH)
 parser.add_argument('--hide-window',
                     help='Hide the browser window by positioning it out of screen.',
                     action='store_true',
@@ -89,7 +96,7 @@ def get_driver_with_retry(url):
             wait.until(EC.presence_of_element_located((By.XPATH, '//div[@id="ReviewsFeed"]')))
             return driver, wait
         except TimeoutException as e:
-            print(f"Error getting driver: {e}, retrying for the {i+1} time...")
+            logger.error(f"Error getting driver: {e}, retrying for the {i+1} time...")
             driver.quit()
             time.sleep(1)
     raise TimeoutException("Failed to get driver")
@@ -229,7 +236,7 @@ def get_reviews_from_page(driver, wait):
             "senior_management": subrating_map["senior_management"],
             "helpful_count": helpful_count,
         })
-        print(reviews_data[-1])
+        # logger.info(reviews_data[-1])
     return reviews_data
 
 def get_all_reviews(url):
@@ -238,11 +245,11 @@ def get_all_reviews(url):
     page = 1
     while True:
         full_url = url_base + f'_P{page}.htm'
-        print(f"Getting reviews from {full_url}")
+        logger.info(f"Getting reviews from {full_url}")
         try:
             driver, wait = get_driver_with_retry(full_url)
         except TimeoutException as e:
-            print(f"Could not get driver for {full_url}, skipping...")
+            logger.error(f"Could not get driver for {full_url}, skipping...")
             page += 1
             driver.quit()
             continue
@@ -254,13 +261,34 @@ def get_all_reviews(url):
         page += 1
     return all_reviews
 
-def save_reviews(reviews):
+def save_reviews(reviews, filepath):
     dataFrame = pd.DataFrame(reviews)
-    dataFrame.to_csv('reviews.csv', index=False)
+    dataFrame.to_csv(filepath, index=False)
+    logger.info(f'Saved to {filepath}')
 
 if __name__ == "__main__":
-    url = 'https://www.glassdoor.com/Reviews/ActiveFence-Reviews-E4077549.htm'
-    all_reviews = get_all_reviews(url)
-    save_reviews(all_reviews)
-    print(len(all_reviews))
+    start_timestamp = datetime.datetime.now()
+    # Set up logging to both console and file
+    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
 
+    # Console handler
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(log_formatter)
+    logger.addHandler(ch)
+
+    # File handler with rotation
+    fh = RotatingFileHandler('reviews.log', maxBytes=1_000_000, backupCount=5)
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(log_formatter)
+    logger.addHandler(fh)
+
+    logger.info(f'Args: {args}')
+    logger.info(f'Started at {start_timestamp.strftime("%Y/%m/%d %H:%M:%S")}')
+    all_reviews = get_all_reviews(args.url)
+    save_reviews(all_reviews, args.filepath)
+    end_timestamp = datetime.datetime.now()
+    logger.info(f'Finished at {end_timestamp.strftime("%Y/%m/%d %H:%M:%S")}')
+    logger.info(f'Total time: {(end_timestamp - start_timestamp).total_seconds()} seconds')
