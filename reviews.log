@@ -1,4 +1,0 @@
-2025-07-22 20:11:15,573 - INFO - Args: Namespace(url='https://www.glassdoor.com/fake-url', filepath='reviews.csv', hide_window=False)
-2025-07-22 20:11:15,575 - INFO - Started at 2025/07/22 20:11:15
-2025-07-22 20:11:15,575 - INFO - Finished at 2025/07/22 20:11:15
-2025-07-22 20:11:15,576 - INFO - Total time: 0.003263 seconds
