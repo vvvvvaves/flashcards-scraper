@@ -5,7 +5,7 @@ from selenium.webdriver.common.by import By
 import time
 from argparse import ArgumentParser
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import pandas as pd
 
 DEFAULT_URL = ('https://www.glassdoor.com/fake-url')
@@ -75,13 +75,25 @@ def get_driver(url):
     if hide_window:
         driver.set_window_position(-10000,0)
 
-    wait = WebDriverWait(driver, 30)
+    wait = WebDriverWait(driver, 15)
 
     driver.get(url)
     inject_custom_cursor_and_hover(driver)
     return driver, wait
 
+def get_driver_with_retry(url):
+    for i in range(3):
+        try:
+            driver, wait = get_driver(url)
+            wait.until(EC.presence_of_element_located((By.XPATH, '//div[@id="ReviewsFeed"]')))
+            return driver, wait
+        except TimeoutException as e:
+            print(f"Error getting driver: {e}, retrying for the {i+1} time...")
+            time.sleep(1)
+    raise TimeoutException("Failed to get driver")
+
 def get_reviews_from_page(driver, wait):
+    # TODO: Handle timeout exception for when the bot does not pass the captcha
     reviews_list = wait.until(EC.presence_of_element_located((By.XPATH, '//div[@id="ReviewsFeed"]')))
     reviews = reviews_list.find_elements(By.XPATH, './/li')
     reviews_data = []
@@ -126,7 +138,6 @@ def get_reviews_from_page(driver, wait):
 
         # Re-inject custom cursor in case of navigation or reload
         inject_custom_cursor_and_hover(driver)
-        time.sleep(0.5)
         subratings_container = review.find_element(By.XPATH, ".//div[contains(@class, 'review-rating_ratingContainer__sQ_4_')]")
         # Scroll the element into view before hovering
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", subratings_container)
@@ -134,7 +145,7 @@ def get_reviews_from_page(driver, wait):
         # Hover over the caret div using ActionChains
         actions = ActionChains(driver)
         actions.move_to_element(subratings_container).perform()
-        time.sleep(1)  # Give time for hover effect
+        time.sleep(0.5)  # Give time for hover effect
         # Fallback: trigger mouseover event via JavaScript
         driver.execute_script("var ev = new MouseEvent('mouseover', {bubbles: true}); arguments[0].dispatchEvent(ev);", subratings_container)
         try:
@@ -179,7 +190,7 @@ def get_reviews_from_page(driver, wait):
             "senior_management": subrating_map["senior_management"],
             "helpful_count": helpful_count,
         })
-        # print(reviews_data[-1])
+        print(reviews_data[-1])
     return reviews_data
 
 def get_all_reviews(url):
@@ -189,9 +200,15 @@ def get_all_reviews(url):
     while True:
         full_url = url_base + f'_P{page}.htm'
         print(f"Getting reviews from {full_url}")
-        driver, wait = get_driver(full_url)
+        try:
+            driver, wait = get_driver_with_retry(full_url)
+        except TimeoutException as e:
+            print(f"Could not get driver for {full_url}, skipping...")
+            page += 1
+            continue
         reviews_data = get_reviews_from_page(driver, wait)
         driver.quit()
+
         if len(reviews_data) == 0:
             break
         all_reviews.extend(reviews_data)
