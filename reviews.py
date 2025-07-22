@@ -1,7 +1,8 @@
-import undetected_chromedriver as uc
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium import webdriver
 import time
 from argparse import ArgumentParser
 from selenium.webdriver.common.action_chains import ActionChains
@@ -26,6 +27,9 @@ parser.add_argument('--hide-window',
                     help='Hide the browser window by positioning it out of screen.',
                     action='store_true',
                     default=False)
+parser.add_argument('--proxy',
+                    help='Proxy server address (e.g., http://user:pass@host:port)',
+                    default=None)
 args = parser.parse_args()
 
 reviews_url = args.url
@@ -76,9 +80,13 @@ def visualize_cursor(driver):
 
     driver.execute_script(enable_cursor)
 
-def get_driver(url):
+
+def get_driver(url, proxy=None):
+    import undetected_chromedriver as uc
     options = uc.ChromeOptions()
     options.add_argument("--start-maximized")
+    if proxy:
+        options.add_argument(f'--proxy-server={proxy}')
     driver = uc.Chrome(options=options)
     if hide_window:
         driver.set_window_position(-10000,0)
@@ -89,10 +97,39 @@ def get_driver(url):
     # visualize_cursor(driver)
     return driver, wait
 
+def random_xy_click(driver):
+    import random
+    x = random.randint(0, 500)
+    y = random.randint(0, 500)
+    driver.execute_script(f"document.elementFromPoint({x}, {y}).click();")
+    return driver
+
+def random_move(driver):
+    import random
+    x = random.randint(0, 500)
+    y = random.randint(0, 500)
+    actions = ActionChains(driver)
+    actions.move_by_offset(x, y).perform()
+    return driver
+
+def random_sleep(driver):
+    import random
+    time.sleep(random.random() * 3)
+    return driver
+
+def simulate_human_interaction(driver):
+    import random
+    actions = [random_xy_click, random_move, random_sleep]
+    random.shuffle(actions)
+    for func in actions:
+        func(driver)
+    return driver
+
 def get_driver_with_retry(url):
     for i in range(3):
         try:
             driver, wait = get_driver(url)
+            simulate_human_interaction(driver)
             wait.until(EC.presence_of_element_located((By.XPATH, '//div[@id="ReviewsFeed"]')))
             return driver, wait
         except TimeoutException as e:
@@ -251,7 +288,6 @@ def get_all_reviews(url):
         except TimeoutException as e:
             logger.error(f"Could not get driver for {full_url}, skipping...")
             page += 1
-            driver.quit()
             continue
         reviews_data = get_reviews_from_page(driver, wait)
         driver.quit()
@@ -287,6 +323,7 @@ if __name__ == "__main__":
 
     logger.info(f'Args: {args}')
     logger.info(f'Started at {start_timestamp.strftime("%Y/%m/%d %H:%M:%S")}')
+
     all_reviews = get_all_reviews(args.url)
     save_reviews(all_reviews, args.filepath)
     end_timestamp = datetime.datetime.now()
