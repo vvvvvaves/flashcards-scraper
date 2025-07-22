@@ -7,6 +7,7 @@ from argparse import ArgumentParser
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import pandas as pd
+from bs4 import BeautifulSoup
 
 DEFAULT_URL = ('https://www.glassdoor.com/fake-url')
 
@@ -40,7 +41,7 @@ def svg_matches(element, svg_str):
     except Exception:
         return False
 
-def inject_custom_cursor_and_hover(driver):
+def visualize_cursor(driver):
     enable_cursor = """
         function enableCursor() {
             var seleniumFollowerImg = document.createElement("img");
@@ -78,7 +79,7 @@ def get_driver(url):
     wait = WebDriverWait(driver, 15)
 
     driver.get(url)
-    inject_custom_cursor_and_hover(driver)
+    # visualize_cursor(driver)
     return driver, wait
 
 def get_driver_with_retry(url):
@@ -89,70 +90,53 @@ def get_driver_with_retry(url):
             return driver, wait
         except TimeoutException as e:
             print(f"Error getting driver: {e}, retrying for the {i+1} time...")
+            driver.quit()
             time.sleep(1)
     raise TimeoutException("Failed to get driver")
 
 def get_reviews_from_page(driver, wait):
-    # TODO: Handle timeout exception for when the bot does not pass the captcha
+    # Wait for ReviewsFeed as before
     reviews_list = wait.until(EC.presence_of_element_located((By.XPATH, '//div[@id="ReviewsFeed"]')))
-    reviews = reviews_list.find_elements(By.XPATH, './/li')
+    html = reviews_list.get_attribute('outerHTML')
+    soup = BeautifulSoup(html, 'html.parser')
     reviews_data = []
-    for review in reviews:
-        review_title = review.find_elements(By.XPATH, './/h3')[0].text
-        divs = review.find_elements(By.XPATH, './/div[contains(@class, "text-with-icon")]')
+    review_elements = driver.find_elements(By.XPATH, '//div[@id="ReviewsFeed"]//li')
+
+    def get_review_title(review_static):
+        return review_static.find('h3').get_text(strip=True) if review_static.find('h3') else None
+    
+    def get_employee_status_and_location(review_static):
+        divs = review_static.find_all('div', class_="text-with-icon_TextWithIcon__5ZZqT")
         employee_status = None
         location = None
         for div in divs:
-            if div.find_elements(By.CSS_SELECTOR, 'svg[class="icon_Icon__ptI3R"]'):
+            if div.find('svg', class_='icon_Icon__ptI3R'):
                 if not location:
-                    location = div.text.strip()
+                    location = div.get_text(strip=True)
             else:
                 if not employee_status:
-                    employee_status = div.text.strip()
-
-        p_elements = review.find_elements(By.XPATH, './/p')
-        pros = p_elements[1].text
-        cons = p_elements[3].text
-        spans = review.find_elements(By.XPATH, './/span')
-        rating = spans[0].text
-        date = spans[1].text
-        position = spans[3].text
-        review_details = review.find_element(By.XPATH, './/div[@class="review-details_experienceContainer__2W06X"]')
-        svgs = review_details.find_elements(By.CSS_SELECTOR, 'svg')
-
-
-        svg_map = {
-            "recommend": svgs[0],
-            "ceo_approval": svgs[1],
-            "business_outlook": svgs[2]
-        }
-        for rating_type, actual_svg in svg_map.items():
-            for rating_value, svg_value in predefined_svg_elements.items():
-                if svg_matches(actual_svg, svg_value):
-                    svg_map[rating_type] = rating_value
-                    break
-        
-        for key, value in svg_map.items():
-            if value not in predefined_svg_elements.keys():
-                svg_map[key] = None
-
-        # Re-inject custom cursor in case of navigation or reload
-        inject_custom_cursor_and_hover(driver)
-        subratings_container = review.find_element(By.XPATH, ".//div[contains(@class, 'review-rating_ratingContainer__sQ_4_')]")
-        # Scroll the element into view before hovering
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", subratings_container)
-        time.sleep(0.5)
-        # Hover over the caret div using ActionChains
-        actions = ActionChains(driver)
-        actions.move_to_element(subratings_container).perform()
-        time.sleep(0.5)  # Give time for hover effect
-        # Fallback: trigger mouseover event via JavaScript
-        driver.execute_script("var ev = new MouseEvent('mouseover', {bubbles: true}); arguments[0].dispatchEvent(ev);", subratings_container)
-        try:
-            popup = subratings_container.find_element(By.TAG_NAME, "aside")
-            subratings = popup.find_elements(By.CSS_SELECTOR, "div[class='review-rating_subRating__0Q_Z0']")
-        except NoSuchElementException:
-            subratings = []
+                    employee_status = div.get_text(strip=True)
+        return employee_status, location
+    
+    def get_pros_cons(review_static):
+        p_elements = review_static.find_all('p')
+        pros = p_elements[1].get_text(strip=True) if len(p_elements) > 1 else None
+        cons = p_elements[3].get_text(strip=True) if len(p_elements) > 3 else None
+        return pros, cons
+    
+    def get_spans_data(review_static):
+        spans = review_static.find_all('span')
+        rating = spans[0].get_text(strip=True) if len(spans) > 0 else None
+        date = spans[1].get_text(strip=True) if len(spans) > 1 else None
+        position = spans[3].get_text(strip=True) if len(spans) > 3 else None
+        return rating, date, position
+    
+    def get_helpful_count(review_static):
+        helpful_div = review_static.find('div', attrs={'data-test': 'review-helpful-count'})
+        return helpful_div.get_text(strip=True) if helpful_div else 0
+    
+    def get_subratings(review_dynamic, driver):
+            # Subratings popup (Selenium only)
         subrating_map = {
             "life_balance": None,
             "culture_values": None,
@@ -161,14 +145,69 @@ def get_reviews_from_page(driver, wait):
             "comp_benefits": None,
             "senior_management": None,
         }
-        for subrating_key, subrating_div in zip(subrating_map.keys(), subratings):
-            count = 5 - subrating_div.get_attribute('innerHTML').count('RatingStarOutline')
-            subrating_map[subrating_key] = count
-
         try:
-            helpful_count = review.find_element(By.CSS_SELECTOR, 'div[data-test="review-helpful-count"]').text
-        except NoSuchElementException:
-            helpful_count = 0
+            subratings_container = review_dynamic.find_element(By.XPATH, ".//div[contains(@class, 'review-rating_ratingContainer__sQ_4_')]")
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", subratings_container)
+            time.sleep(0.5)
+            actions = ActionChains(driver)
+            actions.move_to_element(subratings_container).perform()
+            time.sleep(0.5)
+            driver.execute_script("var ev = new MouseEvent('mouseover', {bubbles: true}); arguments[0].dispatchEvent(ev);", subratings_container)
+            try:
+                popup = subratings_container.find_element(By.TAG_NAME, "aside")
+                subratings = popup.find_elements(By.CSS_SELECTOR, "div[class='review-rating_subRating__0Q_Z0']")
+            except NoSuchElementException:
+                subratings = []
+            for subrating_key, subrating_div in zip(subrating_map.keys(), subratings):
+                count = 5 - subrating_div.get_attribute('innerHTML').count('RatingStarOutline')
+                subrating_map[subrating_key] = count
+        except Exception:
+            pass
+        return subrating_map
+    
+    def get_svg_map(review_dynamic):
+        svgs = review_dynamic.find_elements(By.CSS_SELECTOR, '.review-details_experienceContainer__2W06X svg')
+        svg_map = {
+            "recommend": svgs[0],
+            "ceo_approval": svgs[1],
+            "business_outlook": svgs[2]
+        }
+        return svg_map
+    
+    def get_recommend(svg_map):
+        for rating_value, svg_value in predefined_svg_elements.items():
+            if svg_matches(svg_map["recommend"], svg_value):
+                return rating_value
+        return None
+    
+    def get_ceo_approval(svg_map):
+        for rating_value, svg_value in predefined_svg_elements.items():
+            if svg_matches(svg_map["ceo_approval"], svg_value):
+                return rating_value
+        return None
+    
+    def get_business_outlook(svg_map):
+        for rating_value, svg_value in predefined_svg_elements.items():
+            if svg_matches(svg_map["business_outlook"], svg_value):
+                return rating_value
+        return None
+    
+    
+    for idx, (review_static, review_dynamic) in enumerate(zip(soup.find_all('li'), review_elements)):
+        # Parse static fields with BeautifulSoup
+        review_title = get_review_title(review_static)
+        employee_status, location = get_employee_status_and_location(review_static)
+        pros, cons = get_pros_cons(review_static)
+        rating, date, position = get_spans_data(review_static)
+        helpful_count = get_helpful_count(review_static)
+        subrating_map = get_subratings(review_dynamic, driver)
+        
+        # Get SVGs
+        svg_map = get_svg_map(review_dynamic)
+        svg_map["recommend"] = get_recommend(svg_map)
+        svg_map["ceo_approval"] = get_ceo_approval(svg_map)
+        svg_map["business_outlook"] = get_business_outlook(svg_map)
+
 
         reviews_data.append({
             "review_title": review_title,
@@ -205,10 +244,10 @@ def get_all_reviews(url):
         except TimeoutException as e:
             print(f"Could not get driver for {full_url}, skipping...")
             page += 1
+            driver.quit()
             continue
         reviews_data = get_reviews_from_page(driver, wait)
         driver.quit()
-
         if len(reviews_data) == 0:
             break
         all_reviews.extend(reviews_data)
