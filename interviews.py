@@ -95,11 +95,7 @@ def get_interviews_from_page(driver, wait):
         p_elements = div.find_elements(By.TAG_NAME, "p")
         application_process = p_elements[1].text
         interview_review = p_elements[3].text
-        question_elements = div.find_elements(By.CSS_SELECTOR, 'div.interview-details_interviewText__YH2ZO > p')
-        interview_questions = [question_element.get_attribute('textContent') for question_element in question_elements]
-        print(published_date)
-        print(interview_questions)
-        
+        interview_questions = [q.get_attribute('textContent') for q in div.find_elements(By.CSS_SELECTOR, 'div[data-test="question-container"] div.interview-details_interviewText__YH2ZO > p')]
         try:
             helpful_count = div.find_element(By.CSS_SELECTOR, 'div[data-test="review-helpful-count"]').text
         except NoSuchElementException:
